@@ -1,0 +1,21 @@
+# Python local environment
+venv311/
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Local runtime/audio artifacts
+audio/output/
+audio/input/
+audio/ref/
+
+# Local editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
