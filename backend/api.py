@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from flask import Flask, Response, jsonify, request
+from flask_cors import CORS
 
 try:
     from backend.services.ollama_cli_service import (
@@ -40,6 +41,7 @@ MAX_BITRATE_BPS = 2_000_000
 SUPPORTED_REF_EXTENSIONS = {".wav", ".mp3", ".flac"}
 
 app = Flask(__name__)
+CORS(app)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 _xtts_model = None
