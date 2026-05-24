@@ -1,10 +1,25 @@
-from TTS.api import TTS
+from pathlib import Path
+import sys
+import subprocess
 
-tts = TTS(model_name="tts_models/multilingual/multi-dataset/xtts_v2")
+BASE = Path(__file__).resolve().parent.parent
 
-tts.tts_to_file(
-    text="Olá, este é um teste de voz feminina.",
-    speaker="female",
-    language="pt",
-    file_path="teste.wav"
-)
+ref = BASE / "audio" / "ref" / "ref.wav"
+out = BASE / "audio" / "output" / "teste_coquitt.wav"
+
+cmd = [
+    sys.executable,
+    "-m",
+    "TTS.bin.synthesize",
+    "--model_name",
+    "tts_models/multilingual/multi-dataset/xtts_v2",
+    "--text",
+    "Olá este é um teste de voz de beta",
+    "--speaker_wav",
+    str(ref),
+    "--language_idx",
+    "pt",
+    "--out_path",
+    str(out)
+]
+subprocess.run(cmd, check=True)

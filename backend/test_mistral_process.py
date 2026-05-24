@@ -17,51 +17,51 @@ import os
 import sys
 import time
 
-import requests
+from backend.services.ollama_cli_service import (
+    OllamaCliError,
+    get_ollama_exe,
+    get_ollama_model,
+    query_ollama_cli,
+)
 
 
-def build_prompt(question: str) -> str:
+def build_prompt(question: str, max_tokens: int) -> str:
     return (
         "Voce e um assistente medico local para um prototipo IoT. "
         "Responda em portugues do Brasil, com objetividade e seguranca. "
         "Nao invente diagnosticos e oriente procurar atendimento medico "
         "em sinais de gravidade.\n\n"
+        f"Use no maximo {max_tokens} tokens.\n"
         f"Pergunta: {question}\n"
         "Resposta:"
     )
 
 
 def main() -> int:
-    # Integracao Python -> Ollama/Mistral:
+    # Integracao Python -> Ollama/Mistral via CLI:
     # este processo filho valida a IA local sem carregar TTS nem Flask.
-    ollama_url = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434/api/generate")
-    model = os.getenv("OLLAMA_MODEL", "mistral:latest")
+    model = os.getenv("OLLAMA_MODEL", get_ollama_model())
     question = os.getenv("MISTRAL_TEST_QUESTION", "Explique em uma frase o que e gripe.")
-    read_timeout = float(os.getenv("OLLAMA_READ_TIMEOUT", "90"))
-
-    payload = {
-        "model": model,
-        "prompt": build_prompt(question),
-        "stream": False,
-        "options": {"temperature": 0.2},
-    }
+    cli_timeout = int(float(os.getenv("OLLAMA_CLI_TIMEOUT", "90")))
+    max_tokens = int(os.getenv("MISTRAL_TEST_MAX_TOKENS", "48"))
 
     started_at = time.monotonic()
-    response = requests.post(ollama_url, json=payload, timeout=(5, read_timeout))
-    response.raise_for_status()
-
-    data = response.json()
-    answer = str(data.get("response", "")).strip()
+    answer = query_ollama_cli(
+        build_prompt(question, max_tokens),
+        model=model,
+        timeout_seconds=cli_timeout,
+    )
     elapsed = time.monotonic() - started_at
 
     if not answer:
-        raise RuntimeError("Ollama retornou resposta vazia")
+        raise RuntimeError("Ollama CLI retornou resposta vazia")
 
     print(json.dumps(
         {
             "status": "ok",
             "model": model,
-            "ollama_url": ollama_url,
+            "ollama_exe": get_ollama_exe(),
+            "ollama_mode": "cli_subprocess",
             "elapsed_seconds": round(elapsed, 2),
             "question": question,
             "answer": answer,
@@ -76,7 +76,7 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as exc:
-        print(f"Erro ao testar Mistral/Ollama: {exc}", file=sys.stderr)
+        print(f"Erro ao testar Mistral/Ollama via CLI: {exc}", file=sys.stderr)
         raise SystemExit(1)
 """
 
@@ -101,12 +101,48 @@ def parse_args() -> argparse.Namespace:
         default=str(PROJECT_PYTHON),
         help="Interpretador Python usado no processo filho.",
     )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=48,
+        help="Limite de tokens da resposta gerada pelo Mistral.",
+    )
+    parser.add_argument(
+        "--ollama-exe",
+        default="",
+        help="Caminho opcional para o ollama.exe. Tambem pode usar OLLAMA_EXE.",
+    )
+    parser.add_argument(
+        "--model",
+        default="",
+        help="Modelo Ollama usado no teste. Padrao: OLLAMA_MODEL ou mistral:latest.",
+    )
+    parser.add_argument(
+        "--cli-timeout",
+        type=int,
+        default=90,
+        help="Timeout da chamada 'ollama run' em segundos.",
+    )
     return parser.parse_args()
 
 
-def run_mistral_process(question: str, timeout: int, python_exe: str) -> subprocess.CompletedProcess[str]:
+def run_mistral_process(
+    question: str,
+    timeout: int,
+    python_exe: str,
+    max_tokens: int,
+    ollama_exe: str,
+    model: str,
+    cli_timeout: int,
+) -> subprocess.CompletedProcess[str]:
     child_env = os.environ.copy()
     child_env["MISTRAL_TEST_QUESTION"] = question
+    child_env["MISTRAL_TEST_MAX_TOKENS"] = str(max_tokens)
+    child_env["OLLAMA_CLI_TIMEOUT"] = str(cli_timeout)
+    if ollama_exe:
+        child_env["OLLAMA_EXE"] = ollama_exe
+    if model:
+        child_env["OLLAMA_MODEL"] = model
 
     command = [
         python_exe,
@@ -135,7 +171,15 @@ def main() -> int:
         return 1
 
     try:
-        result = run_mistral_process(args.question, args.timeout, str(python_path))
+        result = run_mistral_process(
+            args.question,
+            args.timeout,
+            str(python_path),
+            args.max_tokens,
+            args.ollama_exe,
+            args.model,
+            args.cli_timeout,
+        )
     except subprocess.TimeoutExpired:
         print(
             f"Timeout ao testar Mistral/Ollama apos {args.timeout} segundos.",

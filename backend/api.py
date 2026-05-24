@@ -8,15 +8,28 @@ import wave
 from pathlib import Path
 from typing import Any
 
-import requests
 from flask import Flask, Response, jsonify, request
+
+try:
+    from backend.services.ollama_cli_service import (
+        OllamaCliError,
+        get_ollama_exe,
+        get_ollama_model,
+        query_ollama_cli,
+    )
+except ImportError:
+    from services.ollama_cli_service import (
+        OllamaCliError,
+        get_ollama_exe,
+        get_ollama_model,
+        query_ollama_cli,
+    )
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 AUDIO_OUTPUT_DIR = PROJECT_ROOT / "audio" / "output"
 AUDIO_REF_DIR = PROJECT_ROOT / "audio" / "ref"
 DEFAULT_PIPER_MODEL = PROJECT_ROOT / "models" / "pt_BR-faber-medium.onnx"
-DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 DEFAULT_XTTS_MODEL = "tts_models/multilingual/multi-dataset/xtts_v2"
 
 DEFAULT_PACKET_BYTES = 1024
@@ -54,14 +67,6 @@ def get_piper_model() -> Path:
         return model_path
 
     return PROJECT_ROOT / model_path
-
-
-def get_ollama_url() -> str:
-    return os.getenv("OLLAMA_URL", DEFAULT_OLLAMA_URL)
-
-
-def get_ollama_model() -> str:
-    return os.getenv("OLLAMA_MODEL", "mistral:latest")
 
 
 def get_xtts_model_name() -> str:
@@ -141,25 +146,8 @@ def build_medical_prompt(question: str) -> str:
 
 
 def ask_local_ai(question: str) -> str:
-    payload = {
-        "model": get_ollama_model(),
-        "prompt": build_medical_prompt(question),
-        "stream": False,
-        "options": {
-            "temperature": 0.2,
-        },
-    }
-
-    logger.info("Enviando pergunta para Ollama/Mistral")
-    response = requests.post(get_ollama_url(), json=payload, timeout=(5, 180))
-    response.raise_for_status()
-
-    data = response.json()
-    answer = str(data.get("response", "")).strip()
-    if not answer:
-        raise RuntimeError("Ollama retornou resposta vazia")
-
-    return answer
+    logger.info("Enviando pergunta para Ollama/Mistral via CLI")
+    return query_ollama_cli(build_medical_prompt(question))
 
 
 def validate_piper() -> tuple[Path, Path]:
@@ -299,6 +287,8 @@ def health():
         {
             "status": "ok",
             "ollama_model": get_ollama_model(),
+            "ollama_mode": "cli_subprocess",
+            "ollama_exe": get_ollama_exe(),
             "tts_engine": get_tts_engine(),
             "xtts_model": get_xtts_model_name(),
             "voice_reference": str(reference_voice) if reference_voice else None,
@@ -366,8 +356,8 @@ def ask_audio():
         )
     except ValueError as exc:
         return jsonify({"erro": str(exc)}), 400
-    except requests.RequestException as exc:
-        logger.exception("Falha ao chamar Ollama")
+    except OllamaCliError as exc:
+        logger.exception("Falha ao chamar Ollama via CLI")
         return jsonify({"erro": "falha ao chamar IA local", "detalhe": str(exc)}), 502
     except Exception as exc:
         logger.exception("Falha ao processar pergunta")

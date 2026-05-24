@@ -130,6 +130,7 @@ projeto-iot/
 │   └── audio/
 ├── esp32/
 │   └── firmware.ino
+├── frontend/
 ├── docs/
 ├── tests/
 ├── README.md
