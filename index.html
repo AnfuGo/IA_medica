@@ -7,31 +7,63 @@
 </head>
 <body>
 
-<h1>Assistente Médico (Debug + Teste)</h1>
+<header>
+  <h1>🩺 Assistente Médico IoT</h1>
+  <p class="subtitle">Interface de teste, debug e consultas</p>
+</header>
 
-<div class="box">
-  <h2>Nova Consulta</h2>
-  <textarea id="inputPergunta" placeholder="Digite a pergunta..."></textarea>
-  <button onclick="enviarPergunta()">Enviar</button>
-</div>
+<main class="container">
 
-<div class="box">
-  <h2>Resposta</h2>
-  <p><strong>Pergunta:</strong> <span id="pergunta"></span></p>
-  <p><strong>Resposta IA:</strong> <span id="resposta"></span></p>
+  <!-- COLUNA ESQUERDA -->
+  <section class="left">
 
-  <audio id="audioPlayer" controls></audio>
-</div>
+    <div class="card">
+      <h2>💬 Nova Consulta</h2>
+      <textarea id="inputPergunta" placeholder="Digite sintomas ou pergunta..."></textarea>
+      <button onclick="enviarPergunta()">Enviar Consulta</button>
+    </div>
 
-<div class="box">
-  <h2>Consultas Salvas</h2>
-  <ul id="listaConsultas"></ul>
-</div>
+    <div class="card">
+      <h2>📜 Histórico</h2>
+      <ul id="listaConsultas"></ul>
+    </div>
 
-<div class="box">
-  <h2>PDF da Consulta</h2>
-  <iframe id="pdfViewer" width="100%" height="500px"></iframe>
-</div>
+  </section>
+
+  <!-- COLUNA DIREITA -->
+  <section class="right">
+
+    <div class="card">
+      <h2>🤖 Resposta</h2>
+
+      <div class="chat">
+        <div class="msg user">
+          <strong>Você:</strong>
+          <p id="pergunta">---</p>
+        </div>
+
+        <div class="msg bot">
+          <strong>IA:</strong>
+          <p id="resposta">Aguardando resposta...</p>
+        </div>
+      </div>
+
+      <audio id="audioPlayer" controls></audio>
+
+    </div>
+
+    <div class="card">
+      <h2>📄 PDF da Consulta</h2>
+      <iframe id="pdfViewer"></iframe>
+    </div>
+
+  </section>
+
+</main>
+
+<footer>
+  <p>Modo Debug • ESP32 + Backend + IA</p>
+</footer>
 
 <script src="app.js"></script>
 
