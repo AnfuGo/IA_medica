@@ -45,3 +45,23 @@ async function enviarPergunta() {
         alert("Erro ao enviar pergunta");
     }
 }
+function salvarConsulta(pergunta, audioURL) {
+    const lista = document.getElementById("listaConsultas");
+
+    const item = document.createElement("li");
+
+    item.innerHTML = `
+        ${pergunta}
+        <button onclick="reproduzir('${audioURL}')">Ouvir</button>
+    `;
+
+    lista.appendChild(item);
+}
+
+function reproduzir(url) {
+    const player = document.getElementById("audioPlayer");
+    player.src = url;
+}
+function carregarPDF(url) {
+    document.getElementById("pdfViewer").src = url;
+}
