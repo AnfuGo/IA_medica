@@ -187,7 +187,7 @@ def load_xtts_model():
         from TTS.api import TTS
 
         logger.info("Carregando XTTS: %s", get_xtts_model_name())
-        _xtts_model = TTS(model_name=get_xtts_model_name(), progress_bar=False, gpu=False)
+        _xtts_model = TTS(model_name=get_xtts_model_name(), progress_bar=True, gpu=False)
 
     return _xtts_model
 

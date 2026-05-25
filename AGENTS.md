@@ -20,7 +20,7 @@ Agentes de IA que atuarem aqui devem preservar modularidade, segurança e simpli
 
 ## Stack Principal
 
-- Python 3.11 via `C:\IA_medica\venv311\Scripts\python.exe`
+- Python 3.11 via `C:\venv311\Scripts\python.exe`
 - Python base 3.11 em `C:\Users\clauf\AppData\Local\Programs\Python\Python311\python.exe`
 - Flask ou FastAPI
 - ESP32 / ESP32-S3

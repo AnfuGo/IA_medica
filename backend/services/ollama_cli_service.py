@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 DEFAULT_OLLAMA_MODEL = "mistral:latest"
-DEFAULT_OLLAMA_TIMEOUT_SECONDS = 180
+DEFAULT_OLLAMA_TIMEOUT_SECONDS = 240
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
