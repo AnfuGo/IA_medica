@@ -1,5 +1,6 @@
 // const API_URL = "https://SEU-TUNNEL.trycloudflare.com";
 const API_URL = "http://127.0.0.1:5000";
+let relatorioFinal = "";
 
 async function enviarPergunta() {
 
@@ -26,7 +27,10 @@ async function enviarPergunta() {
         if (!response.ok) {
             throw new Error("Erro na API");
         }
-
+        const relatorio =
+        response.headers.get(
+            "X-Relatorio"
+        );
         const tts = response.headers.get("X-TTS-Engine");
 
         console.log("TTS usado:", tts);
@@ -49,6 +53,28 @@ async function enviarPergunta() {
             "(Resposta reproduzida em áudio)";
 
         salvarConsulta(pergunta, audioURL);
+        if (relatorio) {
+
+            console.log(
+                "RELATÓRIO FINAL:",
+                relatorio
+            );
+
+            relatorioFinal =
+                relatorio;
+
+            document.getElementById(
+                "btnBaixarPDF"
+            ).disabled = false;
+
+            const relatorioDiv =
+                document.getElementById("relatorio");
+
+            if (relatorioDiv) {
+                relatorioDiv.innerText =
+                    relatorio;
+            }
+        }
 
     } catch (err) {
 
@@ -122,13 +148,19 @@ async function verificarTranscricao() {
                 `${API_URL}${data.audio_url}`
             );
         }
-
         if (data.relatorio) {
 
             console.log(
                 "RELATÓRIO FINAL:",
                 data.relatorio
             );
+
+            relatorioFinal =
+                data.relatorio;
+
+            document.getElementById(
+                "btnBaixarPDF"
+            ).disabled = false;
 
             const relatorioDiv =
                 document.getElementById("relatorio");

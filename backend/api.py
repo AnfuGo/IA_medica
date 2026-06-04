@@ -599,7 +599,7 @@ def ask_audio():
             )
         except Exception as exc:
             raise RuntimeError("Erro ao consultar IA local") from exc
-
+        relatorio = ""
         # TTS
         try:
             tts_answer = sanitize_answer_for_tts(answer)
@@ -642,10 +642,10 @@ def ask_audio():
                 "X-LLM-Model": get_ollama_model(),
                 "X-TTS-Engine": used_tts_engine,
                 "X-Voice-Reference": str(reference_voice) if reference_voice else "",
+                "X-Relatorio": relatorio
             },
             direct_passthrough=True,
         )
-
     except ValueError as exc:
         logger.warning("Erro de entrada: %s", exc)
         return jsonify({"erro": str(exc)}), 400
