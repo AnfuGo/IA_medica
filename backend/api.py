@@ -363,7 +363,7 @@ def synthesize_audio(answer: str, engine: str | None = None) -> Path:
     engine = get_tts_engine({"tts_engine": engine}) if engine else get_tts_engine()
     reference_voice = get_reference_voice()
 
-    if engine in {"auto", "xtts"} and reference_voice and 0:
+    if engine in {"auto", "xtts"} and reference_voice:
         try:
             return synthesize_audio_xtts(answer, reference_voice)
         except Exception:
