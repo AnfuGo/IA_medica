@@ -119,7 +119,41 @@ def clear_conversation():
 
     with conversation_lock:
         conversation_text = ""
+def pcm_chunks_to_wav() -> Path | None:
 
+    with audio_lock:
+
+        if not audio_queue:
+            return None
+
+        audio_data = b"".join(audio_queue)
+        audio_queue.clear()
+
+    AUDIO_OUTPUT_DIR.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    wav_path = (
+        AUDIO_OUTPUT_DIR /
+        f"gravacao_{uuid.uuid4().hex}.wav"
+    )
+
+    with wave.open(str(wav_path), "wb") as wav_file:
+
+        wav_file.setnchannels(1)      # mono
+        wav_file.setsampwidth(4)      # 32 bits
+        wav_file.setframerate(16000)  # 16 kHz
+
+        wav_file.writeframes(audio_data)
+
+    logger.info(
+        "WAV criado: %s (%d bytes)",
+        wav_path,
+        len(audio_data)
+    )
+
+    return wav_path
 def process_audio_queue():
 
     global transcription_text
@@ -130,20 +164,14 @@ def process_audio_queue():
 
         time.sleep(2)
 
-        with audio_lock:
-
-            if not audio_queue:
-                continue
-
-            audio_data = b"".join(audio_queue)
-            audio_queue.clear()
-
-        temp_file = AUDIO_OUTPUT_DIR / f"whisper_{uuid.uuid4().hex}.wav"
+        temp_file = None
 
         try:
 
-            with open(temp_file, "wb") as f:
-                f.write(audio_data)
+            temp_file = pcm_chunks_to_wav()
+
+            if temp_file is None:
+                continue
 
             result = model.transcribe(
                 str(temp_file),
@@ -164,10 +192,11 @@ def process_audio_queue():
 
         finally:
 
-            try:
-                temp_file.unlink(missing_ok=True)
-            except:
-                pass
+            if temp_file is not None:
+                try:
+                    temp_file.unlink(missing_ok=True)
+                except:
+                    pass
 
 def get_piper_model() -> Path:
     configured = os.getenv("PIPER_MODEL")
@@ -582,8 +611,8 @@ def ask_audio():
                     get_conversation_text(),
                     fim=True
                 )
-            logger.info("Relatorio gerado:\n%s", relatorio)
-            clear_conversation()
+                logger.info("Relatorio gerado:\n%s", relatorio)
+                clear_conversation()
         except Exception as exc:
             raise RuntimeError("Erro na sintese de audio") from exc
 
@@ -708,7 +737,7 @@ def process_transcription():
         tts_answer = sanitize_answer_for_tts(answer)
 
         # gera áudio
-        audio_path = synthesize_audio(tts_answer, tts_engine)
+        audio_path = synthesize_audio(tts_answer, "auto")
 
         used_tts_engine = "xtts" if "_xtts_" in audio_path.name else "piper"
 

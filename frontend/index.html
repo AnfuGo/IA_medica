@@ -9,52 +9,105 @@
 
 <header>
   <h1>🩺 Assistente Médico IoT</h1>
-  <p class="subtitle">Interface de teste, debug e consultas</p>
+  <p class="subtitle">
+    Interface de teste, debug e consultas
+  </p>
 </header>
 
 <main class="container">
 
-  <!-- COLUNA ESQUERDA -->
+  <!-- ESQUERDA -->
   <section class="left">
 
     <div class="card">
-      <h2> Nova Consulta</h2>
-      <textarea id="inputPergunta" placeholder="Digite sintomas ou pergunta..."></textarea>
-      <button onclick="enviarPergunta()">Enviar Consulta</button>
+
+      <h2>Nova Consulta (Manual)</h2>
+
+      <textarea
+        id="inputPergunta"
+        placeholder="Digite sintomas ou pergunta..."
+      ></textarea>
+
+      <button onclick="enviarPergunta()">
+        Enviar Consulta
+      </button>
+
     </div>
 
     <div class="card">
+
       <h2>Histórico</h2>
+
       <ul id="listaConsultas"></ul>
+
     </div>
 
   </section>
 
-  <!-- COLUNA DIREITA -->
+  <!-- DIREITA -->
   <section class="right">
 
     <div class="card">
+
       <h2>Resposta</h2>
 
+      <div class="status">
+
+        <strong>Backend:</strong>
+        <span id="backendStatus">
+          Conectando...
+        </span>
+
+      </div>
+
       <div class="chat">
+
         <div class="msg user">
-          <strong>Você:</strong>
-          <p id="pergunta">---</p>
+
+          <strong>Pergunta:</strong>
+
+          <p id="pergunta">
+            ---
+          </p>
+
         </div>
 
         <div class="msg bot">
-          <strong>IA:</strong>
-          <p id="resposta">Aguardando resposta...</p>
+
+          <strong>Resposta:</strong>
+
+          <p id="resposta">
+            Aguardando resposta...
+          </p>
+
         </div>
+
       </div>
 
-      <audio id="audioPlayer" controls></audio>
+      <div class="status">
+
+        <strong>TTS:</strong>
+        <span id="ttsEngine">
+          ---
+        </span>
+
+      </div>
+
+      <audio
+        id="audioPlayer"
+        controls
+      ></audio>
 
     </div>
 
     <div class="card">
-      <h2>PDF da Consulta</h2>
-      <iframe id="pdfViewer"></iframe>
+
+      <h2>Relatório Final</h2>
+
+      <pre id="relatorio">
+Nenhum relatório gerado.
+      </pre>
+
     </div>
 
   </section>
@@ -62,7 +115,11 @@
 </main>
 
 <footer>
-  <p>Modo Debug • ESP32 + Backend + IA</p>
+
+  <p>
+    ESP32 + Whisper + Ollama + XTTS/Piper
+  </p>
+
 </footer>
 
 <script src="app.js"></script>

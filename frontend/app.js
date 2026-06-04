@@ -37,11 +37,7 @@ async function enviarPergunta() {
 
         const player = document.getElementById("audioPlayer");
 
-        player.src =
-            `${API_URL}${data.audio_url}`;
-
-        await player.play();
-
+        player.src = audioURL;
 
         try {
             await player.play();
@@ -61,7 +57,15 @@ async function enviarPergunta() {
     }
 }
 
-async function processarTranscricao() {
+let processandoTranscricao = false;
+
+async function verificarTranscricao() {
+
+    if (processandoTranscricao) {
+        return;
+    }
+
+    processandoTranscricao = true;
 
     try {
 
@@ -69,14 +73,19 @@ async function processarTranscricao() {
             `${API_URL}/api/transcricao/processar`
         );
 
-        const data = await response.json();
+        // backend retorna 400 quando não há transcrição
+        if (response.status === 400) {
+            return;
+        }
 
         if (!response.ok) {
-
-            if (response.status === 400) return;
-
-            throw new Error(data.erro);
+            throw new Error(
+                `Erro HTTP ${response.status}`
+            );
         }
+
+        const data = await response.json();
+        document.getElementById("backendStatus").innerText = "Online";
 
         console.log("Pergunta:", data.pergunta);
         console.log("Resposta:", data.resposta);
@@ -86,18 +95,26 @@ async function processarTranscricao() {
 
         document.getElementById("resposta").innerText =
             data.resposta;
+        
+        if (data.tts_engine) {
 
-        // áudio sempre vem do backend
+        document.getElementById("ttsEngine").innerText = data.tts_engine.toUpperCase();
+        }
+
         if (data.audio_url) {
 
-            const player = document.getElementById("audioPlayer");
+            const player =
+                document.getElementById("audioPlayer");
 
-            player.src = `${API_URL}${data.audio_url}`;
+            player.src =
+                `${API_URL}${data.audio_url}`;
 
             try {
                 await player.play();
             } catch {
-                console.log("Autoplay bloqueado");
+                console.log(
+                    "Autoplay bloqueado pelo navegador"
+                );
             }
 
             salvarConsulta(
@@ -108,25 +125,38 @@ async function processarTranscricao() {
 
         if (data.relatorio) {
 
-            console.log("RELATÓRIO FINAL:", data.relatorio);
-
-            document.getElementById("resposta").innerText =
-                "CONSULTA FINALIZADA - RELATÓRIO GERADO";
+            console.log(
+                "RELATÓRIO FINAL:",
+                data.relatorio
+            );
 
             const relatorioDiv =
                 document.getElementById("relatorio");
 
             if (relatorioDiv) {
-                relatorioDiv.innerText = data.relatorio;
+                relatorioDiv.innerText =
+                    data.relatorio;
             }
         }
 
     } catch (err) {
 
-        console.error(err);
-        alert("Erro ao processar transcrição");
+        console.error(
+            "Erro ao verificar transcrição:",
+            err
+        );
+
+    } finally {
+
+        processandoTranscricao = false;
     }
 }
+
+// consulta o backend a cada 2 segundos
+setInterval(
+    verificarTranscricao,
+    2000
+);
 
 function salvarConsulta(pergunta, audioURL) {
 
