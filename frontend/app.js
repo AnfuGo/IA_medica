@@ -1,67 +1,163 @@
-//const API_URL = "https://SEU-TUNNEL.trycloudflare.com";
+// const API_URL = "https://SEU-TUNNEL.trycloudflare.com";
 const API_URL = "http://127.0.0.1:5000";
 
 async function enviarPergunta() {
+
     const pergunta = document.getElementById("inputPergunta").value;
 
     document.getElementById("pergunta").innerText = pergunta;
 
     try {
-        const response = await fetch(`${API_URL}/api/pergunta/audio`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-                pergunta: pergunta,
-                tts_engine: "auto"
-            })
-        });
+
+        const response = await fetch(
+            `${API_URL}/api/pergunta/audio`,
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    pergunta: pergunta,
+                    tts_engine: "auto"
+                })
+            }
+        );
 
         if (!response.ok) {
             throw new Error("Erro na API");
         }
 
-        // pegar headers 
         const tts = response.headers.get("X-TTS-Engine");
 
         console.log("TTS usado:", tts);
 
-        //converter stream em blob
         const audioBlob = await response.blob();
 
         const audioURL = URL.createObjectURL(audioBlob);
 
         const player = document.getElementById("audioPlayer");
-        player.src = audioURL;
+
+        player.src =
+            `${API_URL}${data.audio_url}`;
+
+        await player.play();
+
+
+        try {
+            await player.play();
+        } catch {
+            console.log("Autoplay bloqueado pelo navegador");
+        }
 
         document.getElementById("resposta").innerText =
-            "(Resposta exibida apenas em áudio)";
+            "(Resposta reproduzida em áudio)";
 
         salvarConsulta(pergunta, audioURL);
 
     } catch (err) {
+
         console.error(err);
         alert("Erro ao enviar pergunta");
     }
 }
-function salvarConsulta(pergunta, audioURL) {
-    const lista = document.getElementById("listaConsultas");
 
-    const item = document.createElement("li");
+async function processarTranscricao() {
+
+    try {
+
+        const response = await fetch(
+            `${API_URL}/api/transcricao/processar`
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+
+            if (response.status === 400) return;
+
+            throw new Error(data.erro);
+        }
+
+        console.log("Pergunta:", data.pergunta);
+        console.log("Resposta:", data.resposta);
+
+        document.getElementById("pergunta").innerText =
+            data.pergunta;
+
+        document.getElementById("resposta").innerText =
+            data.resposta;
+
+        // áudio sempre vem do backend
+        if (data.audio_url) {
+
+            const player = document.getElementById("audioPlayer");
+
+            player.src = `${API_URL}${data.audio_url}`;
+
+            try {
+                await player.play();
+            } catch {
+                console.log("Autoplay bloqueado");
+            }
+
+            salvarConsulta(
+                data.pergunta,
+                `${API_URL}${data.audio_url}`
+            );
+        }
+
+        if (data.relatorio) {
+
+            console.log("RELATÓRIO FINAL:", data.relatorio);
+
+            document.getElementById("resposta").innerText =
+                "CONSULTA FINALIZADA - RELATÓRIO GERADO";
+
+            const relatorioDiv =
+                document.getElementById("relatorio");
+
+            if (relatorioDiv) {
+                relatorioDiv.innerText = data.relatorio;
+            }
+        }
+
+    } catch (err) {
+
+        console.error(err);
+        alert("Erro ao processar transcrição");
+    }
+}
+
+function salvarConsulta(pergunta, audioURL) {
+
+    const lista =
+        document.getElementById("listaConsultas");
+
+    const item =
+        document.createElement("li");
 
     item.innerHTML = `
         ${pergunta}
-        <button onclick="reproduzir('${audioURL}')">Ouvir</button>
+        <button onclick="reproduzir('${audioURL}')">
+            Ouvir
+        </button>
     `;
 
     lista.appendChild(item);
 }
 
 function reproduzir(url) {
-    const player = document.getElementById("audioPlayer");
+
+    const player =
+        document.getElementById("audioPlayer");
+
     player.src = url;
+
+    player.play().catch(() => {});
 }
+
 function carregarPDF(url) {
-    document.getElementById("pdfViewer").src = url;
+
+    document.getElementById("pdfViewer").src =
+        url;
 }

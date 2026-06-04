@@ -1,0 +1,17 @@
+faz " git clone https://github.com/AnfuGo/IA_medica " (se n tiver o projeto ainda)
+depois cria um ambiente virtual como venv311 (baixe o python 3.11)
+faça na pasta em que vc quiser criar o ambiente virtual: python -311 venv nomedoambiente (ex: venv311) (no cmd)
+acione o ambiente com C:\pastadovenv\nomedoambiente\Scripts\activate.bat no cmd
+dps va a pasta C:\pastaquetu-colocou o projeto\IA_medica e com o ambiente ativado: python install -r requirements.txt ou python install -r requirements (n lembro bem o comando)
+NO CMD do VS:
+cd C:\pastaquetu-colocou o projeto\IA_medica\backend
+"python -m api " ou "python api "
+
+em outro terminal(cmd) para o frontend:
+cd C:\pastaquetu-colocou o projeto\IA_medica\frontend
+C:\pastaquetu-colocou o projeto\IA_medica\backend
+python -m http.server 8000
+ai vc acessa no seguinte link: 127.0.0.1:8000
+só entra no link do GitHub pages: https://anfugo.github.io/IA_medica/
+e só testar.....
+

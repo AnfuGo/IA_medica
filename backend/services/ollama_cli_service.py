@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 DEFAULT_OLLAMA_MODEL = "mistral:latest"
-DEFAULT_OLLAMA_TIMEOUT_SECONDS = 240
+DEFAULT_OLLAMA_TIMEOUT_SECONDS = 600
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
@@ -89,13 +89,20 @@ def query_ollama_cli(
     prompt: str,
     model: str | None = None,
     timeout_seconds: int | None = None,
+    max_tokens: int = 48,
 ) -> str:
     if not prompt.strip():
         raise OllamaCliError("prompt vazio")
 
     resolved_model = model or get_ollama_model()
     resolved_timeout = timeout_seconds or get_ollama_timeout()
-    command = [get_ollama_exe(), "run", resolved_model, prompt]
+
+    command = [
+        get_ollama_exe(),
+        "run",
+        resolved_model,
+        prompt,
+    ]
 
     try:
         result = subprocess.run(
