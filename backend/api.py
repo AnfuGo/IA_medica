@@ -17,6 +17,7 @@ from flask_cors import CORS
 try:
     from backend.services.ollama_cli_service import (
         OllamaCliError,
+        get_ollama_base_url,
         get_ollama_exe,
         get_ollama_model,
         query_ollama_cli,
@@ -24,6 +25,7 @@ try:
 except ImportError:
     from services.ollama_cli_service import (
         OllamaCliError,
+        get_ollama_base_url,
         get_ollama_exe,
         get_ollama_model,
         query_ollama_cli,
@@ -52,9 +54,22 @@ _xtts_model = None
 _whisper_model = None
 _speaker_embedding = None
 
+SYSTEM_CHAT_PROMPT = (
+    "Voce e um assistente medico local para um prototipo IoT. "
+    "Responda em portugues do Brasil, de forma objetiva, segura e simples. "
+    "Nao invente diagnosticos, nao prescreva medicamentos controlados e oriente "
+    "procurar atendimento medico em sinais de gravidade."
+)
+
 audio_queue = deque()
 transcription_text = ""
 conversation_text = ""
+conversation_messages = [
+    {
+        "role": "system",
+        "content": SYSTEM_CHAT_PROMPT,
+    }
+]
 
 conversation_lock = threading.Lock()
 audio_lock = threading.Lock()
@@ -105,6 +120,18 @@ def append_conversation(question: str, answer: str):
             f"\nPACIENTE: {question}\n"
             f"ASSISTENTE: {answer}\n"
         )
+        conversation_messages.append(
+            {
+                "role": "user",
+                "content": question,
+            }
+        )
+        conversation_messages.append(
+            {
+                "role": "assistant",
+                "content": answer,
+            }
+        )
 
 
 def get_conversation_text() -> str:
@@ -113,12 +140,25 @@ def get_conversation_text() -> str:
         return conversation_text.strip()
 
 
+def get_conversation_messages() -> list[dict[str, str]]:
+
+    with conversation_lock:
+        return [dict(message) for message in conversation_messages]
+
+
 def clear_conversation():
 
     global conversation_text
+    global conversation_messages
 
     with conversation_lock:
         conversation_text = ""
+        conversation_messages = [
+            {
+                "role": "system",
+                "content": SYSTEM_CHAT_PROMPT,
+            }
+        ]
 def pcm_chunks_to_wav() -> Path | None:
 
     with audio_lock:
@@ -288,6 +328,27 @@ def build_medical_prompt(question: str) -> str:
     )
 
 
+def build_medical_prompt_with_history(history: str, question: str) -> str:
+    prompt = (
+        "Voce e um assistente medico local para um prototipo IoT. "
+        "Responda em portugues do Brasil, de forma objetiva, segura e simples. "
+        "Nao invente diagnosticos, nao prescreva medicamentos controlados e oriente "
+        "procurar atendimento medico em sinais de gravidade.\n\n"
+    )
+
+    history = history.strip()
+    if history:
+        prompt += f"Historico recente:\n{history}\n\n"
+
+    prompt += (
+        "Quando considerar que a consulta foi concluida, finalize sua resposta "
+        "com a palavra FIM em uma linha separada.\n\n"
+        f"Pergunta: {question}\n"
+        "Resposta:"
+    )
+    return prompt
+
+
 def build_pdf_prompt(conversation: str) -> str:
     return (
         "Voce e um sistema de geracao de prontuario medico.\n\n"
@@ -342,13 +403,17 @@ def ask_local_ai(text: str, fim: bool = False) -> str:
 
     logger.info("Enviando pergunta para Ollama/Mistral via CLI")
 
-    prompt = (
-        build_pdf_prompt(text)
-        if fim
-        else build_medical_prompt(text)
-    )
+    if fim:
+        return query_ollama_cli(build_pdf_prompt(text))
 
-    return query_ollama_cli(prompt)
+    messages = get_conversation_messages()
+    messages.append(
+        {
+            "role": "user",
+            "content": text,
+        }
+    )
+    return query_ollama_cli(messages=messages)
 def sanitize_answer_for_tts(text: str) -> str:
 
     if not text:
@@ -544,7 +609,8 @@ def health():
         {
             "status": "ok",
             "ollama_model": get_ollama_model(),
-            "ollama_mode": "cli_subprocess",
+            "ollama_mode": "http_api",
+            "ollama_base_url": get_ollama_base_url(),
             "ollama_exe": get_ollama_exe(),
             "tts_engine": get_tts_engine(),
             "xtts_model": get_xtts_model_name(),
@@ -599,20 +665,11 @@ def ask_audio():
             )
         except Exception as exc:
             raise RuntimeError("Erro ao consultar IA local") from exc
-        relatorio = ""
         # TTS
         try:
             tts_answer = sanitize_answer_for_tts(answer)
             #audio_path = synthesize_audio(tts_answer, tts_engine)
             audio_path = synthesize_audio(tts_answer, tts_engine)
-            if consulta_finalizada(answer):
-                print("Consulta encerrada")
-                relatorio = ask_local_ai(
-                    get_conversation_text(),
-                    fim=True
-                )
-                logger.info("Relatorio gerado:\n%s", relatorio)
-                clear_conversation()
         except Exception as exc:
             raise RuntimeError("Erro na sintese de audio") from exc
 
@@ -642,7 +699,7 @@ def ask_audio():
                 "X-LLM-Model": get_ollama_model(),
                 "X-TTS-Engine": used_tts_engine,
                 "X-Voice-Reference": str(reference_voice) if reference_voice else "",
-                "X-Relatorio": relatorio
+                "X-Relatorio": ""
             },
             direct_passthrough=True,
         )

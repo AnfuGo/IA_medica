@@ -1,12 +1,14 @@
 import os
 import re
 import shutil
-import subprocess
 from pathlib import Path
+
+import requests
 
 
 DEFAULT_OLLAMA_MODEL = "mistral:latest"
 DEFAULT_OLLAMA_TIMEOUT_SECONDS = 600
+DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434"
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
@@ -16,6 +18,11 @@ class OllamaCliError(RuntimeError):
 
 def get_ollama_model() -> str:
     return os.getenv("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL)
+
+
+def get_ollama_base_url() -> str:
+    configured = os.getenv("OLLAMA_BASE_URL", DEFAULT_OLLAMA_BASE_URL)
+    return configured.rstrip("/")
 
 
 def _path_exists(path: Path) -> bool:
@@ -86,51 +93,81 @@ def clean_ollama_output(text: str) -> str:
 
 
 def query_ollama_cli(
-    prompt: str,
+    prompt: str | None = None,
     model: str | None = None,
     timeout_seconds: int | None = None,
     max_tokens: int = 48,
+    messages: list[dict[str, str]] | None = None,
 ) -> str:
-    if not prompt.strip():
-        raise OllamaCliError("prompt vazio")
-
     resolved_model = model or get_ollama_model()
     resolved_timeout = timeout_seconds or get_ollama_timeout()
+    url = f"{get_ollama_base_url()}/api/chat"
 
-    command = [
-        get_ollama_exe(),
-        "run",
-        resolved_model,
-        prompt,
-    ]
+    if messages is None:
+        if prompt is None or not prompt.strip():
+            raise OllamaCliError("prompt vazio")
+        messages_payload = [
+            {
+                "role": "user",
+                "content": prompt,
+            }
+        ]
+    else:
+        messages_payload = []
+        for message in messages:
+            if not isinstance(message, dict):
+                raise OllamaCliError("messages deve conter dicionarios")
+
+            role = str(message.get("role") or "").strip()
+            content = str(message.get("content") or "").strip()
+            if not role or not content:
+                continue
+            messages_payload.append(
+                {
+                    "role": role,
+                    "content": content,
+                }
+            )
+
+        if not messages_payload:
+            raise OllamaCliError("messages vazias")
+
+    payload = {
+        "model": resolved_model,
+        "messages": messages_payload,
+        "stream": False,
+        "options": {
+            "num_predict": max_tokens,
+        },
+        "keep_alive": "5m",
+    }
 
     try:
-        result = subprocess.run(
-            command,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            capture_output=True,
+        response = requests.post(
+            url,
+            json=payload,
             timeout=resolved_timeout,
-            check=False,
         )
-    except FileNotFoundError as exc:
+    except requests.RequestException as exc:
         raise OllamaCliError(
-            "Ollama CLI nao encontrado. Defina OLLAMA_EXE com o caminho do ollama.exe."
-        ) from exc
-    except subprocess.TimeoutExpired as exc:
-        raise OllamaCliError(
-            f"Timeout ao consultar Ollama CLI apos {resolved_timeout} segundos"
+            f"Falha ao consultar Ollama via API HTTP em {url}"
         ) from exc
 
-    stdout = clean_ollama_output(result.stdout)
-    stderr = clean_ollama_output(result.stderr)
+    if response.status_code >= 400:
+        detail = clean_ollama_output(response.text) or f"codigo de saida HTTP {response.status_code}"
+        raise OllamaCliError(f"Ollama API falhou: {detail}")
 
-    if result.returncode != 0:
-        detail = stderr or stdout or f"codigo de saida {result.returncode}"
-        raise OllamaCliError(f"Ollama CLI falhou: {detail}")
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise OllamaCliError("Ollama API retornou JSON invalido") from exc
+
+    message = data.get("message") or {}
+    stdout = clean_ollama_output(
+        str(message.get("content") or data.get("response") or "")
+    )
 
     if not stdout:
-        raise OllamaCliError("Ollama CLI retornou resposta vazia")
+        raise OllamaCliError("Ollama API retornou resposta vazia")
 
     return stdout
