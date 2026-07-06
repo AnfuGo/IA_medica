@@ -48,6 +48,8 @@ app = Flask(__name__)
 CORS(app)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
+
+# Estados globais
 _xtts_model = None
 _whisper_model = None
 _speaker_embedding = None
@@ -55,7 +57,9 @@ _speaker_embedding = None
 audio_queue = deque()
 transcription_text = ""
 conversation_text = ""
+recording_finished = False
 
+# Locks para concorrência
 conversation_lock = threading.Lock()
 audio_lock = threading.Lock()
 text_lock = threading.Lock()
@@ -64,134 +68,95 @@ def get_piper_exe() -> Path:
     configured = os.getenv("PIPER_EXE")
     if configured:
         return Path(configured)
-
     found = shutil.which("piper")
     if found:
         return Path(found)
-
     return Path(r"C:\piper\piper.exe")
 
 def load_whisper_model():
     global _whisper_model
-
     if _whisper_model is None:
         logger.info("Carregando Whisper")
         _whisper_model = whisper.load_model("base")
-
     return _whisper_model
 
 def push_audio_chunk(audio_bytes: bytes):
-
     with audio_lock:
         audio_queue.append(audio_bytes)
 
 def consume_transcription():
-
     global transcription_text
-
     with text_lock:
-
         text = transcription_text.strip()
         transcription_text = ""
-
     return text
+
 def append_conversation(question: str, answer: str):
-
     global conversation_text
-
     with conversation_lock:
-
         conversation_text += (
             f"\nPACIENTE: {question}\n"
             f"ASSISTENTE: {answer}\n"
         )
 
-
 def get_conversation_text() -> str:
-
     with conversation_lock:
         return conversation_text.strip()
 
-
 def clear_conversation():
-
     global conversation_text
-
     with conversation_lock:
         conversation_text = ""
+
 def pcm_chunks_to_wav() -> Path | None:
-
     with audio_lock:
-
         if not audio_queue:
             return None
-
         audio_data = b"".join(audio_queue)
         audio_queue.clear()
 
-    AUDIO_OUTPUT_DIR.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-    wav_path = (
-        AUDIO_OUTPUT_DIR /
-        f"gravacao_{uuid.uuid4().hex}.wav"
-    )
+    AUDIO_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    wav_path = AUDIO_OUTPUT_DIR / f"gravacao_{uuid.uuid4().hex}.wav"
 
     with wave.open(str(wav_path), "wb") as wav_file:
-
         wav_file.setnchannels(1)      # mono
-        wav_file.setsampwidth(4)      # 32 bits
+        wav_file.setsampwidth(2)      # 16 bits
         wav_file.setframerate(16000)  # 16 kHz
-
         wav_file.writeframes(audio_data)
 
-    logger.info(
-        "WAV criado: %s (%d bytes)",
-        wav_path,
-        len(audio_data)
-    )
-
+    logger.info("WAV criado: %s (%d bytes)", wav_path, len(audio_data))
     return wav_path
+
 def process_audio_queue():
-
     global transcription_text
-
+    global recording_finished
     model = load_whisper_model()
 
     while True:
+        if not recording_finished:
+            time.sleep(0.1)
+            continue
 
-        time.sleep(2)
-
+        recording_finished = False
         temp_file = None
 
         try:
-
             temp_file = pcm_chunks_to_wav()
-
             if temp_file is None:
                 continue
 
-            result = model.transcribe(
-                str(temp_file),
-                language="pt"
-            )
-
+            logger.info("Processando gravação completa")
+            result = model.transcribe(str(temp_file), language="pt")
             text = result["text"].strip()
 
             if text:
-
                 with text_lock:
                     transcription_text += " " + text
-
                 logger.info("Whisper: %s", text)
 
         except Exception:
             logger.exception("Erro no Whisper")
-
         finally:
-
             if temp_file is not None:
                 try:
                     temp_file.unlink(missing_ok=True)
@@ -202,29 +167,22 @@ def get_piper_model() -> Path:
     configured = os.getenv("PIPER_MODEL")
     if not configured:
         return DEFAULT_PIPER_MODEL
-
     model_path = Path(configured)
     if model_path.is_absolute():
         return model_path
-
     return PROJECT_ROOT / model_path
-
 
 def get_xtts_model_name() -> str:
     return os.getenv("XTTS_MODEL", DEFAULT_XTTS_MODEL)
-
 
 def get_tts_engine(payload: dict[str, Any] | None = None) -> str:
     configured = None
     if payload:
         configured = payload.get("tts_engine")
-
     engine = str(configured or os.getenv("TTS_ENGINE", "auto")).strip().lower()
     if engine not in {"auto", "xtts", "piper"}:
         raise ValueError("tts_engine deve ser 'auto', 'xtts' ou 'piper'")
-
     return engine
-
 
 def get_reference_voice() -> Path | None:
     configured = os.getenv("VOICE_REF_WAV") or os.getenv("SPEAKER_WAV")
@@ -238,42 +196,32 @@ def get_reference_voice() -> Path | None:
         return None
 
     candidates = [
-        path
-        for path in sorted(AUDIO_REF_DIR.iterdir())
+        path for path in sorted(AUDIO_REF_DIR.iterdir())
         if path.is_file() and path.suffix.lower() in SUPPORTED_REF_EXTENSIONS
     ]
     return candidates[0] if candidates else None
 
-
 def parse_int(value: Any, default: int, minimum: int, maximum: int) -> int:
     if value is None:
         return default
-
     try:
         parsed = int(value)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"valor inteiro invalido: {value}") from exc
-
     if parsed < minimum or parsed > maximum:
         raise ValueError(f"valor fora do intervalo {minimum}-{maximum}: {parsed}")
-
     return parsed
-
 
 def get_question(payload: dict[str, Any]) -> str:
     question = payload.get("pergunta") or payload.get("question") or payload.get("text")
     if not isinstance(question, str):
         raise ValueError("envie 'pergunta', 'question' ou 'text' como texto")
-
     question = question.strip()
     if not question:
         raise ValueError("pergunta vazia")
-
     if len(question) > 2000:
         raise ValueError("pergunta muito longa; limite atual: 2000 caracteres")
-
     return question
-
 
 def build_medical_prompt(question: str) -> str:
     return (
@@ -283,22 +231,19 @@ def build_medical_prompt(question: str) -> str:
         "procurar atendimento medico em sinais de gravidade.\n\n"
         "Quando considerar que a consulta foi concluida, finalize sua resposta "
         "com a palavra FIM em uma linha separada.\n\n"
-        f"Pergunta: {question}\n"
+        "Pergunta: {question}\n"
         "Resposta:"
     )
 
-
 def build_pdf_prompt(conversation: str) -> str:
     return (
-        "Voce e um sistema de geracao de prontuario medico.\n\n"
+        "Voce e um systema de geracao de prontuario medico.\n\n"
         "Analise toda a conversa abaixo e gere SOMENTE o relatorio "
         "estruturado exatamente no formato solicitado.\n\n"
         "Nao invente informacoes.\n"
         "Quando nao houver informacao disponivel, escreva "
         "'Nao informado'.\n\n"
-
         "FORMATO OBRIGATORIO:\n\n"
-
         "Nome do paciente:\n"
         "Data da consulta:\n"
         "CPF:\n"
@@ -311,82 +256,50 @@ def build_pdf_prompt(conversation: str) -> str:
         "Saturacao de oxigenio:\n"
         "Peso:\n"
         "Altura:\n\n"
-
         "Sintomas principais:\n"
         "- item 1\n"
         "- item 2\n\n"
-
         "Tempo de evolucao dos sintomas:\n\n"
-
         "Medicamentos em uso:\n\n"
-
         "Alergias:\n\n"
-
         "Doencas pre-existentes:\n\n"
-
         "Gravidade:\n"
         "(Baixa, Media ou Alta)\n\n"
-
         "Possiveis doencas:\n"
         "- hipotese 1\n"
         "- hipotese 2\n\n"
-
         "Recomendacao:\n\n"
-
         "Resumo clinico:\n\n"
-
         f"CONVERSA:\n{conversation}"
     )
 
 def ask_local_ai(text: str, fim: bool = False) -> str:
-
     logger.info("Enviando pergunta para Ollama/Mistral via CLI")
-
-    prompt = (
-        build_pdf_prompt(text)
-        if fim
-        else build_medical_prompt(text)
-    )
-
+    prompt = build_pdf_prompt(text) if fim else build_medical_prompt(text)
     return query_ollama_cli(prompt)
-def sanitize_answer_for_tts(text: str) -> str:
 
+def sanitize_answer_for_tts(text: str) -> str:
     if not text:
         return ""
-
-    # remove pontuações que costumam atrapalhar TTS
     text = re.sub(r"[.,;:!?()\[\]{}\"']", " ", text)
-
-    # remove múltiplos espaços
     text = re.sub(r"\s+", " ", text)
-
     words = text.split()
-
     if not words:
         return ""
-
     filtered = [words[0]]
-
     for word in words[1:]:
-
-        # remove palavras repetidas em sequência
         if word.lower() != filtered[-1].lower():
             filtered.append(word)
-
     return " ".join(filtered).strip()
 
 def validate_piper() -> tuple[Path, Path]:
     piper_exe = get_piper_exe()
     piper_model = get_piper_model()
-
     if not piper_exe.exists():
         raise FileNotFoundError(f"Piper nao encontrado: {piper_exe}")
-
     if not piper_model.exists():
         raise FileNotFoundError(f"Modelo Piper nao encontrado: {piper_model}")
-
     return piper_exe, piper_model
-
 
 def synthesize_audio(answer: str, engine: str | None = None) -> Path:
     engine = get_tts_engine({"tts_engine": engine}) if engine else get_tts_engine()
@@ -399,65 +312,50 @@ def synthesize_audio(answer: str, engine: str | None = None) -> Path:
             if engine == "xtts":
                 raise
             logger.exception("XTTS falhou; usando Piper como fallback")
-
     return synthesize_audio_piper(answer)
-
 
 def load_xtts_model():
     global _xtts_model
-
     if _xtts_model is None:
         from TTS.api import TTS
-
         logger.info("Carregando XTTS: %s", get_xtts_model_name())
         _xtts_model = TTS(model_name=get_xtts_model_name(), progress_bar=True, gpu=False)
-
     return _xtts_model
 
 def get_speaker_embedding(tts, reference_voice):
     global _speaker_embedding
-
     if _speaker_embedding is None:
-        _speaker_embedding = tts.get_speaker_embedding(str(reference_voice))
-
+        logger.info("Extraindo embeddings de voz (condicionamento latente) do XTTS...")
+        if hasattr(tts, 'synthesizer') and tts.synthesizer is not None:
+            xtts_model = tts.synthesizer.tts_model
+            gpt_cond_latent, speaker_embedding = xtts_model.get_conditioning_latents(
+                audio_path=[str(reference_voice)]
+            )
+            _speaker_embedding = (gpt_cond_latent, speaker_embedding)
+        else:
+            raise RuntimeError("O sintetizador XTTS não foi inicializado corretamente.")
     return _speaker_embedding
 
 def synthesize_audio_xtts(answer: str, reference_voice: Path) -> Path:
-    try:
-        if not reference_voice.exists():
-            raise FileNotFoundError(f"Voz de referencia nao encontrada: {reference_voice}")
+    tts = load_xtts_model()
+    gpt_cond_latent, speaker_embedding = get_speaker_embedding(tts, reference_voice)
 
-        AUDIO_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        output_path = AUDIO_OUTPUT_DIR / f"resposta_xtts_{uuid.uuid4().hex}.wav"
+    AUDIO_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    output_path = AUDIO_OUTPUT_DIR / f"resposta_xtts_{uuid.uuid4().hex}.wav"
 
-        logger.info("Gerando audio com XTTS usando voz de referencia: %s", reference_voice)
+    logger.info("Gerando audio com XTTS")
+    tts.tts_to_file(
+        text=answer,
+        file_path=str(output_path),
+        speaker_wav=str(reference_voice),
+        language="pt",
+    )
 
-        try:
-            tts = load_xtts_model()
-        except Exception as exc:
-            raise RuntimeError("Erro ao carregar modelo XTTS") from exc
+    if not output_path.exists() or output_path.stat().st_size == 0:
+        raise RuntimeError("XTTS nao gerou arquivo de audio valido")
 
-        try:
-            embedding = get_speaker_embedding(tts, reference_voice)
-
-            tts.tts_to_file(
-                text=answer,
-                speaker_embeddings=embedding,
-                language="pt",
-                file_path=str(output_path),
-            )
-        except Exception as exc:
-            raise RuntimeError("Erro durante a sintese de audio (XTTS)") from exc
-
-        if not output_path.exists() or output_path.stat().st_size == 0:
-            raise RuntimeError("XTTS nao gerou arquivo de audio valido")
-
-        return output_path
-
-    except Exception as exc:
-        logger.error("Falha na sintese de audio XTTS: %s", exc)
-        raise
-
+    return output_path
+    
 
 def synthesize_audio_piper(answer: str) -> Path:
     piper_exe, piper_model = validate_piper()
@@ -485,19 +383,15 @@ def synthesize_audio_piper(answer: str) -> Path:
 
     if result.returncode != 0:
         raise RuntimeError(f"Piper falhou: {result.stderr.strip()}")
-
     if not output_path.exists() or output_path.stat().st_size == 0:
         raise RuntimeError("Piper nao gerou arquivo de audio valido")
 
     return output_path
 
 def consulta_finalizada(answer: str) -> bool:
-
     if not answer:
         return False
-
     texto = answer.strip().upper()
-
     return (
         texto.endswith("FIM")
         or texto.endswith("FIM.")
@@ -515,18 +409,15 @@ def detect_wav_bitrate(audio_path: Path) -> int:
     except wave.Error:
         return 256_000
 
-
 def audio_packets(audio_path: Path, packet_bytes: int, bitrate_bps: int):
     started_at = time.monotonic()
     sent_bytes = 0
-
     try:
         with audio_path.open("rb") as file:
             while True:
                 packet = file.read(packet_bytes)
                 if not packet:
                     break
-
                 yield packet
                 sent_bytes += len(packet)
                 expected_elapsed = sent_bytes * 8 / bitrate_bps
@@ -558,19 +449,12 @@ def health():
 @app.post("/api/pergunta/audio")
 @app.post("/api/ask/audio")
 def ask_audio():
-    # Integracao ESP32 -> Python:
-    # O ESP32 envia JSON com a pergunta e recebe um WAV em pacotes binarios,
-    # com ritmo de envio controlado por bitrate_bps para facilitar o playback.
-
     raw_payload = request.get_json(silent=True) or {}
-
     try:
         if not isinstance(raw_payload, dict):
             raise ValueError("JSON deve ser um objeto")
 
         payload = raw_payload
-
-        # Parsing de entrada
         question = get_question(payload)
         tts_engine = get_tts_engine(payload)
 
@@ -593,17 +477,14 @@ def ask_audio():
         # IA
         try:
             answer = ask_local_ai(question)
-            append_conversation(
-                question,
-                answer
-            )
+            append_conversation(question, answer)
         except Exception as exc:
             raise RuntimeError("Erro ao consultar IA local") from exc
+        
         relatorio = ""
         # TTS
         try:
             tts_answer = sanitize_answer_for_tts(answer)
-            #audio_path = synthesize_audio(tts_answer, tts_engine)
             audio_path = synthesize_audio(tts_answer, tts_engine)
             if consulta_finalizada(answer):
                 print("Consulta encerrada")
@@ -612,11 +493,10 @@ def ask_audio():
                     fim=True
                 )
                 logger.info("Relatorio gerado:\n%s", relatorio)
-                clear_conversation()
+                # AJUSTE: Não chamamos clear_conversation() aqui para o frontend poder ler o estado depois!
         except Exception as exc:
             raise RuntimeError("Erro na sintese de audio") from exc
 
-        # Pós-processamento
         try:
             detected_bitrate = detect_wav_bitrate(audio_path)
         except Exception as exc:
@@ -649,74 +529,64 @@ def ask_audio():
     except ValueError as exc:
         logger.warning("Erro de entrada: %s", exc)
         return jsonify({"erro": str(exc)}), 400
-
     except OllamaCliError as exc:
         logger.exception("Falha ao chamar Ollama via CLI")
-        return jsonify(
-            {"erro": "falha ao chamar IA local", "detalhe": str(exc)}
-        ), 502
-
+        return jsonify({"erro": "falha ao chamar IA local", "detalhe": str(exc)}), 502
     except Exception as exc:
         logger.exception("Falha geral no processamento de audio")
-        return jsonify(
-            {"erro": "falha ao gerar resposta em audio", "detalhe": str(exc)}
-        ), 500
+        return jsonify({"erro": "falha ao gerar resposta em audio", "detalhe": str(exc)}), 500
+
+
 @app.post("/api/audio/chunk")
 def receive_audio_chunk():
-
+    global recording_finished
     try:
-
         chunk = request.data
-
         if not chunk:
             return jsonify({"erro": "chunk vazio"}), 400
 
+        reset = request.headers.get("X-Chunk-Reset", "false").lower() == "true"
+        final_chunk = request.headers.get("X-Chunk-Final", "false").lower() == "true"
+
+        if reset:
+            with audio_lock:
+                audio_queue.clear()
+            logger.info("Nova gravação iniciada")
+
         push_audio_chunk(chunk)
+
+        if final_chunk:
+            recording_finished = True
+            logger.info("Último chunk recebido")
 
         return jsonify({
             "status": "recebido",
-            "bytes": len(chunk)
+            "bytes": len(chunk),
+            "final": final_chunk
         })
-
     except Exception as exc:
-
         logger.exception("Erro ao receber chunk")
-
-        return jsonify({
-            "erro": str(exc)
-        }), 500
+        return jsonify({"erro": str(exc)}), 500
     
 @app.get("/api/transcricao")
 def get_transcription():
-
     with text_lock:
-
         return jsonify({
             "texto": transcription_text.strip()
         })
     
-worker = threading.Thread(
-    target=process_audio_queue,
-    daemon=True
-)
 @app.get("/api/audio/<filename>")
 def get_audio_file(filename):
-
     audio_path = AUDIO_OUTPUT_DIR / filename
-
     if not audio_path.exists():
         return jsonify({"erro": "arquivo nao encontrado"}), 404
+    return send_file(audio_path, mimetype="audio/wav")
 
-    return send_file(
-        audio_path,
-        mimetype="audio/wav"
-    )
+
 @app.get("/api/transcricao/processar")
 def process_transcription():
-
     try:
         question = consume_transcription()
-
         if not question:
             return jsonify({
                 "erro": "nenhuma transcricao disponivel"
@@ -724,21 +594,12 @@ def process_transcription():
 
         logger.info("Pergunta transcrita: %s", question)
 
-        # IA
         answer = ask_local_ai(question)
-
-        # detecta fim
         fim = consulta_finalizada(answer)
-
-        # adiciona histórico
         append_conversation(question, answer)
 
-        # sanitiza para TTS
         tts_answer = sanitize_answer_for_tts(answer)
-
-        # gera áudio
         audio_path = synthesize_audio(tts_answer, "auto")
-
         used_tts_engine = "xtts" if "_xtts_" in audio_path.name else "piper"
 
         response = {
@@ -748,38 +609,55 @@ def process_transcription():
             "tts_engine": used_tts_engine,
             "fim": fim
         }
+
         if fim:
-
             logger.info("Consulta finalizada. Gerando relatório...")
-
             conversation = get_conversation_text()
-
-            relatorio = ask_local_ai(
-                conversation,
-                fim=True
-            )
-
+            relatorio = ask_local_ai(conversation, fim=True)
             response["relatorio"] = relatorio
-
-            # limpa histórico após relatório
-            clear_conversation()
+            # AJUSTE: Removido clear_conversation() daqui também!
 
         return jsonify(response)
 
     except OllamaCliError as exc:
         logger.exception("Falha ao chamar Ollama")
-        return jsonify({
-            "erro": "falha ao consultar IA",
-            "detalhe": str(exc)
-        }), 502
-
+        return jsonify({"erro": "falha ao consultar IA", "detalhe": str(exc)}), 502
     except Exception as exc:
         logger.exception("Falha ao processar transcricao")
-        return jsonify({
-            "erro": str(exc)
-        }), 500
+        return jsonify({"erro": str(exc)}), 500
+
+
+@app.post("/api/consulta/reset")
+def reset_consulta():
+    """ Rota explícita para limpar o histórico quando a sessão realmente acabar """
+    clear_conversation()
+    with text_lock:
+        global transcription_text
+        transcription_text = ""
+    with audio_lock:
+        audio_queue.clear()
+    logger.info("Sessão clínica reiniciada manualmente.")
+    return jsonify({"status": "sucesso", "mensagem": "Conversa limpa"})
+
+
+@app.get("/api/consulta/relatorio")
+def obtener_relatorio():
+    conversation = get_conversation_text()
+    if not conversation:
+        return jsonify({"erro": "Nenhuma consulta ativa"}), 400
+        
+    relatorio = ask_local_ai(conversation, fim=True)
+    return jsonify({
+        "historico": conversation,
+        "relatorio": relatorio
+    })
+
+
+# AJUSTE DE FLUXO: Inicialização da thread do Whisper e execução do app organizados no final do arquivo
+worker = threading.Thread(target=process_audio_queue, daemon=True)
 worker.start()
+
 if __name__ == "__main__":
-    host = os.getenv("API_HOST", "127.0.0.1")
+    host = os.getenv("API_HOST", "0.0.0.0")
     port = int(os.getenv("API_PORT", "5000"))
     app.run(host=host, port=port, threaded=True)
