@@ -1,145 +1,162 @@
-const API_URL = "https://findarticles-numerous-observation-palm.trycloudflare.com"; 
+// Ajuste esta URL para o mesmo host usado no ESP32 (serverHost) durante os testes.
+// Ex: se você usar um túnel Cloudflare, coloque a mesma URL aqui e no firmware.
+// const API_URL = "https://SEU-TUNNEL.trycloudflare.com";
+const API_URL = "https://approximate-stocks-pay-efficiency.trycloudflare.com";
+
+console.log("VERSAO APP.JS: com dedupe de audio - v6");
+
 let relatorioFinal = "";
 let processandoTranscricao = false;
 
-// Inicializa o verificador cíclico de áudio vindo do ESP32 (a cada 2 segundos)
-let intervaloTranscricao = setInterval(verificarTranscricao, 2000); 
+// Guarda a última URL de áudio já tocada/exibida.
+// O backend mantém a mesma resposta disponível até a próxima pergunta ser
+// processada, então usamos essa comparação para não tocar o mesmo áudio
+// repetidamente a cada ciclo de polling (2s).
+let lastAudioUrl = null;
 
-async function verificarTranscricao() {
-    if (processandoTranscricao) return;
-    processandoTranscricao = true;
+// ==================================================================================
+// Envio de pergunta via TEXTO (uso para testes sem o ESP32 físico)
+// Requer a rota /api/pergunta/texto no backend (ver mensagem anterior).
+// ==================================================================================
+async function enviarPergunta() {
+    const inputEl = document.getElementById("inputPergunta");
+    const pergunta = inputEl.value.trim();
 
-    let precisaReiniciarInterval = true; 
+    if (!pergunta) {
+        alert("Digite uma pergunta antes de enviar.");
+        return;
+    }
+
+    document.getElementById("pergunta").innerText = pergunta;
+    document.getElementById("resposta").innerText = "Aguardando resposta...";
 
     try {
-        // 1. Apenas lê se há algum texto acumulado vindo do Whisper no backend
-        const response = await fetch(`${API_URL}/api/transcricao`);
+        const response = await fetch(`${API_URL}/api/pergunta/texto`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ pergunta })
+        });
+
         if (!response.ok) {
-            console.warn(`Backend indisponível ou retornou erro HTTP: ${response.status}`);
-            return; 
+            throw new Error(`Erro HTTP ${response.status}`);
+        }
+
+        // A pergunta foi apenas enfileirada aqui.
+        // A resposta real (texto + áudio + eventual relatório) chega
+        // pelo polling normal em verificarTranscricao().
+        inputEl.value = "";
+
+    } catch (err) {
+        console.error(err);
+        alert("Erro ao enviar pergunta");
+        document.getElementById("resposta").innerText = "";
+    }
+}
+
+// ==================================================================================
+// Polling do backend — usado tanto para o fluxo de texto quanto para o áudio do ESP32
+// ==================================================================================
+async function verificarTranscricao() {
+    if (processandoTranscricao) {
+        return;
+    }
+    processandoTranscricao = true;
+
+    try {
+        const response = await fetch(`${API_URL}/api/transcricao/processar`);
+
+        if (!response.ok) {
+            throw new Error(`Erro HTTP ${response.status}`);
         }
 
         const data = await response.json();
-        
-        // Se o Whisper transcreveu algo válido:
-        if (data.texto && data.texto.trim() !== "") {
-            console.log("Texto detectado! Iniciando processamento do Pipeline...", data.texto);
-            
-            // Pausa o intervalo principal temporariamente para evitar concorrência
-            clearInterval(intervaloTranscricao); 
-            precisaReiniciarInterval = false; 
+        document.getElementById("backendStatus").innerText = "Online";
 
-            document.getElementById("backendStatus").innerText = "Processando IA...";
-            
-            let processado = false;
-            let dadosFinais = null;
-            let tentativas = 0;
+        // Enquanto não há pergunta nova ou o backend ainda está processando,
+        // não há dados úteis para exibir — apenas ignora este ciclo.
+        if (data.status === "aguardando" || data.status === "processando") {
+            return;
+        }
 
-            // 2. Loop de Polling Interno Protegido (Aguarda o status 200 do backend)
-            while (!processado && tentativas < 40) {
-                tentativas++;
-                try {
-                    const respostaIA = await fetch(`${API_URL}/api/transcricao/processar`);
-                    
-                    if (respostaIA.status === 202) {
-                        console.log(`[Tentativa ${tentativas}] Servidor backend gerando resposta e áudio...`);
-                        await new Promise(resolve => setTimeout(resolve, 1500)); 
-                    } else if (respostaIA.status === 200) {
-                        dadosFinais = await respostaIA.json();
-                        
-                        // SE for o fim da consulta, só consideramos "Totalmente Processado" 
-                        // quando a thread de background terminar e entregar o relatório de texto!
-                        if (dadosFinais.fim && !dadosFinais.relatorio) {
-                            console.log("Áudio pronto, mas a thread ainda está processando o relatório...");
-                            
-                            // Atualiza o áudio logo na tela caso queira que o navegador já toque antes de exibir o relatório
-                            if (dadosFinais.audio_url && !document.getElementById("audioPlayer").src.includes(dadosFinais.audio_url)) {
-                                executarAudioResposta(dadosFinais);
-                            }
-                            await new Promise(resolve => setTimeout(resolve, 1500));
-                        } else {
-                            processado = true; // Tudo pronto! (Ou consulta comum, ou consulta com relatório pronto)
-                        }
-                    } else {
-                        console.error(`O servidor retornou um status inesperado: HTTP ${respostaIA.status}`);
-                        break; 
-                    }
-                } catch (errInner) {
-                    console.error("Falha de rede momentânea no loop interno:", errInner);
-                    await new Promise(resolve => setTimeout(resolve, 2000));
-                }
+        // O backend agora mantém a mesma resposta disponível repetidamente
+        // (não apaga mais após servir uma vez), para que ESP32 e frontend
+        // possam consultar de forma independente. Por isso, sempre atualizamos
+        // os textos na tela (não custa nada), mas SÓ tocamos o áudio e
+        // registramos na lista se for realmente uma resposta nova.
+        if (data.pergunta) {
+            document.getElementById("pergunta").innerText = data.pergunta;
+        }
+        if (data.resposta) {
+            document.getElementById("resposta").innerText = data.resposta;
+        }
+
+        if (data.tts_engine) {
+            document.getElementById("ttsEngine").innerText = data.tts_engine.toUpperCase();
+        }
+
+        const audioUrlCompleta = data.audio_url ? `${API_URL}${data.audio_url}` : null;
+
+        // Dedupe: só age se a URL do áudio for diferente da última já tratada.
+        // Como cada resposta gera um arquivo com nome único (uuid), isso é
+        // suficiente para detectar "resposta realmente nova".
+        if (audioUrlCompleta && audioUrlCompleta !== lastAudioUrl) {
+            lastAudioUrl = audioUrlCompleta;
+
+            console.log("Pergunta:", data.pergunta);
+            console.log("Resposta:", data.resposta);
+
+            const player = document.getElementById("audioPlayer");
+            player.src = audioUrlCompleta;
+
+            try {
+                await player.play();
+            } catch {
+                console.log("Autoplay bloqueado pelo navegador");
             }
 
-            // 3. Renderiza os dados finais recebidos da IA
-            if (processado && dadosFinais) {
-                document.getElementById("backendStatus").innerText = "Online";
-                document.getElementById("pergunta").innerText = dadosFinais.pergunta || "";
-                document.getElementById("resposta").innerText = dadosFinais.resposta || "";
+            salvarConsulta(data.pergunta, audioUrlCompleta);
 
-                if (dadosFinais.tts_engine) {
-                    document.getElementById("ttsEngine").innerText = dadosFinais.tts_engine.toUpperCase();
+            if (data.relatorio) {
+                console.log("RELATÓRIO FINAL:", data.relatorio);
+
+                relatorioFinal = data.relatorio;
+
+                const btnPDF = document.getElementById("btnBaixarPDF");
+                if (btnPDF) btnPDF.disabled = false;
+
+                const relatorioDiv = document.getElementById("relatorio");
+                if (relatorioDiv) {
+                    relatorioDiv.innerText = data.relatorio;
                 }
-
-                executarAudioResposta(dadosFinais);
-
-                if (dadosFinais.relatorio) {
-                    console.log("CONSURTA CONCLUÍDA! Relatório Recebido da Thread.");
-                    relatorioFinal = dadosFinais.relatorio;
-                    
-                    const btnPDF = document.getElementById("btnBaixarPDF");
-                    if (btnPDF) btnPDF.disabled = false;
-                    
-                    const relatorioDiv = document.getElementById("relatorio");
-                    if (relatorioDiv) relatorioDiv.innerText = dadosFinais.relatorio;
-                }
-
-                // 4. Decisão de reativar o monitoramento baseada na chave "fim"
-                if (!dadosFinais.fim) {
-                    intervaloTranscricao = setInterval(verificarTranscricao, 2000);
-                } else {
-                    document.getElementById("backendStatus").innerText = "Consulta Concluída";
-                }
-            } else {
-                console.warn("Falha ao processar pipeline por estouro de tentativas. Retomando checagem...");
-                intervaloTranscricao = setInterval(verificarTranscricao, 2000);
             }
         }
+
     } catch (err) {
-        console.error("Erro grave ao verificar transcrição:", err);
-        document.getElementById("backendStatus").innerText = "Erro na conexão";
+        console.error("Erro ao verificar transcrição:", err);
+        document.getElementById("backendStatus").innerText = "Offline";
     } finally {
         processandoTranscricao = false;
-        if (precisaReiniciarInterval) {
-            clearInterval(intervaloTranscricao);
-            intervaloTranscricao = setInterval(verificarTranscricao, 2000);
-        }
     }
 }
 
-function executarAudioResposta(dados) {
-    if (!dados.audio_url) return;
-    const player = document.getElementById("audioPlayer");
-    
-    // Evita recarregar o mesmo áudio se ele já estiver tocando
-    if (player.src.includes(dados.audio_url)) return; 
+// Consulta o backend a cada 2 segundos
+setInterval(verificarTranscricao, 2000);
 
-    player.src = `${API_URL}${dados.audio_url}`;
-    try {
-        player.play();
-    } catch (e) {
-        console.log("Autoplay impedido pelo navegador.");
-    }
-    salvarConsulta(dados.pergunta || "Consulta de Áudio", `${API_URL}${dados.audio_url}`);
-}
-
+// ==================================================================================
+// Utilitários de UI
+// ==================================================================================
 function salvarConsulta(pergunta, audioURL) {
     const lista = document.getElementById("listaConsultas");
     if (!lista) return;
+
     const item = document.createElement("li");
     item.innerHTML = `
-        <strong>Pergunta:</strong> ${pergunta} <br>
-        <button onclick="reproduzir('${audioURL}')" style="margin-top: 5px; padding: 2px 8px;">🔊 Ouvir</button>
-        <hr style="border: 0; border-top: 1px solid #eee; margin: 8px 0;">
+        ${pergunta}
+        <button onclick="reproduzir('${audioURL}')">
+            Ouvir
+        </button>
     `;
     lista.appendChild(item);
 }
@@ -147,5 +164,55 @@ function salvarConsulta(pergunta, audioURL) {
 function reproduzir(url) {
     const player = document.getElementById("audioPlayer");
     player.src = url;
-    player.play().catch(err => console.log("Erro ao reproduzir histórico:", err));
+    player.play().catch(() => {});
+}
+
+function carregarPDF(url) {
+    document.getElementById("pdfViewer").src = url;
+}
+
+function baixarRelatorioPDF() {
+    if (!relatorioFinal) {
+        alert("Nenhum relatório disponível para baixar ainda.");
+        return;
+    }
+ 
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({
+        unit: "mm",
+        format: "a4"
+    });
+ 
+    const margemEsquerda = 15;
+    const margemSuperior = 20;
+    const larguraUtil = 180; // largura da página A4 (210mm) menos as margens
+    const alturaLinha = 6;
+    const alturaPagina = 297; // altura da página A4 em mm
+ 
+    doc.setFontSize(14);
+    doc.text("Relatório de Consulta - Assistente Médico IoT", margemEsquerda, margemSuperior);
+ 
+    doc.setFontSize(10);
+    const dataGeracao = new Date().toLocaleString("pt-BR");
+    doc.text(`Gerado em: ${dataGeracao}`, margemEsquerda, margemSuperior + 8);
+ 
+    doc.setFontSize(11);
+ 
+    // Quebra o texto em linhas que cabem na largura útil da página
+    const linhas = doc.splitTextToSize(relatorioFinal, larguraUtil);
+ 
+    let y = margemSuperior + 18;
+ 
+    linhas.forEach((linha) => {
+        // Se a linha atual ultrapassar o fim da página, cria uma nova página
+        if (y + alturaLinha > alturaPagina - margemSuperior) {
+            doc.addPage();
+            y = margemSuperior;
+        }
+        doc.text(linha, margemEsquerda, y);
+        y += alturaLinha;
+    });
+ 
+    const nomeArquivo = `relatorio_consulta_${Date.now()}.pdf`;
+    doc.save(nomeArquivo);
 }
