@@ -11,9 +11,9 @@
 // ==================================================================================
 // CONFIGURAÇÕES DE REDE E SERVIDOR
 // ==================================================================================
-const char* ssid = "Borchardt";
-const char* password = "Agb230504";
-const char* serverHost = "https://approximate-stocks-pay-efficiency.trycloudflare.com";
+const char* ssid = "SUA REDE_WIFI";
+const char* password = "SUA_SENHA_WIFI";
+const char* serverHost = "SEU LINK_DO_SERVIDOR"; // Ex: https://meuservidor.com.br
 
 #define BUTTON_PIN 4
 #define MIC_SCK 26  
